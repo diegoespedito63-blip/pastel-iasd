@@ -95,7 +95,8 @@
 <header>
   <h1>📊 Painel de Vendas</h1>
   <span class="status"><span class="dot" id="dot"></span><span id="status">Conectando…</span></span>
-  <a class="btn" href="./">🍳 Ver cozinha</a>
+  <a class="btn" href="./">🍳 Cozinha</a>
+  <a class="btn" href="./?modo=bebidas">🥤 Bebidas</a>
 </header>
 
 <div class="wrap">
@@ -120,7 +121,7 @@
   <section>
     <h2>Pedidos <small>(mais recentes primeiro)</small></h2>
     <table>
-      <thead><tr><th>Cliente</th><th>Itens</th><th>Pagamento</th><th class="r">Valor</th><th class="r">Cozinha</th></tr></thead>
+      <thead><tr><th>Cliente</th><th>Itens</th><th>Pagamento</th><th class="r">Valor</th><th class="r">Situação</th></tr></thead>
       <tbody id="tabela"><tr><td class="vazio" colspan="5">Carregando…</td></tr></tbody>
     </table>
   </section>
@@ -131,6 +132,12 @@
 const PLANILHA = '1-i3Qt5g155rNmAX574CoNc8xPX_jcvuUG1gtTVlaUJI';
 const ABA_GID = '1512056425';
 const ATUALIZAR_A_CADA = 2; // segundos
+// Mesmas palavras do painel de bebidas (index.html). Se mudar lá, mude aqui também.
+const PALAVRAS_BEBIDA = ['refri', 'refrigerante', 'coca', 'guarana', 'fanta', 'sprite', 'pepsi', 'kuat',
+  'schweppes', 'soda', 'tonica', 'suco', 'agua', 'h2o', 'lata', 'caldo de cana', 'cha gelado', 'mate', 'limonada'];
+const semAcento = (t) => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const RE_BEBIDA = new RegExp('\\b(' + PALAVRAS_BEBIDA.map(semAcento).join('|') + ')\\b');
+const ehBebida = (item) => RE_BEBIDA.test(semAcento(item));
 // Colunas: A Chave | B Nome cliente | C Item | D Qtde | E Valor unit | F Valor total | G Pagamento | H Obs
 // ==========================================================
 
@@ -166,9 +173,18 @@ function numero(linha, i) {
 const real = (n) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const esc = (t) => String(t).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
+// mesma regra do painel da cozinha: "-", ".", "nada"... não contam como observação
+function obsValida(t) {
+  const s = String(t || '').trim();
+  if (!s) return '';
+  if (/^[\s\-–—_.,;:/\\x0*]+$/i.test(s)) return '';
+  if (/^(n\/?a|nada|nenhum[a]?|sem( obs(erva[çc][ãa]o)?)?|ok|n[ãa]o)$/i.test(s)) return '';
+  return s;
+}
+
 // mesma regra do painel da cozinha (para o status "Pronto" bater)
-function assinatura(p) {
-  const t = JSON.stringify([p.itens.map(i => ({ item: i.item, qtd: i.qtdTxt })), p.obs]);
+function assinatura(itens, obs) {
+  const t = JSON.stringify([itens.map(i => ({ item: i.item, qtd: i.qtdTxt })), obs]);
   let h = 5381;
   for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
   return 'h' + h.toString(36);
@@ -206,19 +222,34 @@ function montar(tabela) {
     if (!item && !cliente) { atual = null; nomeAtual = ''; return; }
     const nome = cliente.toLowerCase().replace(/\s+/g, ' ');
     if (!atual || (nome && nome !== nomeAtual)) {
-      atual = { id: (idx + 2) + '|' + (nome || 'sem-nome'), cliente, itens: [], obs: [], pag: '', valor: 0 };
+      atual = { id: (idx + 2) + '|' + (nome || 'sem-nome'), cliente, itens: [], obs: [], pag: '', valor: 0,
+                partes: { coz: { itens: [], obs: [] }, beb: { itens: [], obs: [] } } };
       pedidos.push(atual); nomeAtual = nome;
     }
     const qtdTxt = celula(l, 3) || '1';
     const qtd = numero(l, 3) || 1;
     const unit = numero(l, 4);
     const total = numero(l, 5) || qtd * unit;
-    if (item) atual.itens.push({ item, qtdTxt, qtd, total });
+    const obs = obsValida(celula(l, 7));
+    const add = (lista, v) => { if (v && !lista.includes(v)) lista.push(v); };
+    if (item) {
+      const it = { item, qtdTxt, qtd, total };
+      atual.itens.push(it);
+      const parte = atual.partes[ehBebida(item) ? 'beb' : 'coz'];
+      parte.itens.push(it); add(parte.obs, obs);
+    } else { add(atual.partes.coz.obs, obs); add(atual.partes.beb.obs, obs); }
     atual.valor += total;
-    const obs = celula(l, 7); if (obs && !atual.obs.includes(obs)) atual.obs.push(obs);
+    add(atual.obs, obs);
     if (!atual.pag) atual.pag = celula(l, 6);
   });
-  pedidos.forEach(p => { p.pronto = prontos[p.id] && prontos[p.id] === assinatura(p); });
+  // cada pedido pode ter parte da cozinha e parte das bebidas; cada painel marca a sua
+  pedidos.forEach(p => {
+    p.falta = [];
+    const coz = p.partes.coz, beb = p.partes.beb;
+    if (coz.itens.length && prontos[p.id] !== assinatura(coz.itens, coz.obs)) p.falta.push('Cozinha');
+    if (beb.itens.length && prontos['beb:' + p.id] !== assinatura(beb.itens, beb.obs)) p.falta.push('Bebidas');
+    p.pronto = p.itens.length > 0 && !p.falta.length;
+  });
 
   // números
   const total = pedidos.reduce((s, p) => s + p.valor, 0);
@@ -226,7 +257,7 @@ function montar(tabela) {
   const nProntos = pedidos.filter(p => p.pronto).length;
   document.getElementById('vTotal').textContent = real(total);
   document.getElementById('vPedidos').textContent = pedidos.length;
-  document.getElementById('sPedidos').textContent = `${nProntos} prontos · ${pedidos.length - nProntos} na cozinha`;
+  document.getElementById('sPedidos').textContent = `${nProntos} prontos · ${pedidos.length - nProntos} em preparo`;
   document.getElementById('vItens').textContent = itens;
   document.getElementById('vTicket').textContent = real(pedidos.length ? total / pedidos.length : 0);
   if (totalAnterior !== null && total > totalAnterior) {
@@ -271,7 +302,7 @@ function montar(tabela) {
       <td class="itn"><span class="itens">${p.itens.map(i => `${esc(i.qtdTxt)}x ${esc(i.item)}`).join(', ')}${p.obs.length ? ' · ⚠ ' + p.obs.map(esc).join(', ') : ''}</span></td>
       <td class="pg">${esc(p.pag || '—')}</td>
       <td class="r vl"><b>${real(p.valor)}</b></td>
-      <td class="r st">${p.pronto ? '<span class="selo ok">✔ Pronto</span>' : '<span class="selo wait">⏳ Na cozinha</span>'}</td>
+      <td class="r st">${p.pronto ? '<span class="selo ok">✔ Pronto</span>' : p.falta.map(f => `<span class="selo wait">⏳ ${f}</span>`).join(' ')}</td>
     </tr>`).join('') : '<tr><td class="vazio" colspan="5">Nenhum pedido ainda.</td></tr>';
   vistos = novosVistos;
 
