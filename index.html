@@ -12,11 +12,25 @@
 <link rel="icon" href="icone-192.png">
 <link rel="apple-touch-icon" href="icone-192.png">
 <title>Pedidos da Cozinha</title>
+<script>
+  // O mesmo arquivo serve a cozinha (index.html) e as bebidas (index.html?modo=bebidas / bebidas.html)
+  const MODO = /(^|[?&])modo=bebidas(&|$)/.test(location.search) ? 'bebidas' : 'cozinha';
+  if (MODO === 'bebidas') {
+    document.title = 'Pedidos de Bebidas';
+    document.querySelector('link[rel=manifest]').href = 'manifest-bebidas.json';
+    document.querySelector('link[rel=icon]').href = 'icone-bebidas-192.png';
+    document.querySelector('link[rel=apple-touch-icon]').href = 'icone-bebidas-192.png';
+    document.querySelector('meta[name=apple-mobile-web-app-title]').content = 'Bebidas';
+    document.documentElement.classList.add('modo-bebidas');
+  }
+</script>
 <style>
   :root {
     --bg: #111418; --card: #1c2128; --line: #2d333b; --text: #f2f4f7; --muted: #9aa4b2;
     --novo: #f5b301; --pronto: #2fb35a; --obs: #ff7a59;
   }
+  html.modo-bebidas { --novo: #3fa7ff; }
+  html.modo-bebidas header { border-bottom: 3px solid #3fa7ff; }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--text);
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -72,7 +86,7 @@
 </head>
 <body>
 <header>
-  <h1>🍳 Pedidos da Cozinha</h1>
+  <h1 id="titulo">🍳 Pedidos da Cozinha</h1>
   <span class="status"><span class="dot" id="dot"></span><span id="status">Conectando…</span></span>
   <button id="som" class="alerta">🔔 Ativar som</button>
   <button id="tela">⛶ Tela cheia</button>
@@ -93,21 +107,36 @@ const ATRASO_MINUTOS = 20;      // tempo para marcar o pedido em vermelho
 // Vazio = o "Pronto" fica salvo só no próprio aparelho.
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby8O3U7XVcNzlHvQau_YctAFM7mYF6N9nwrx4u9utfikDSEoXAnkL2uEbOEbWn1c4Y9_A/exec';
 // Colunas da planilha: A Chave (não usada) | B Nome cliente | C Item | D Qtde | E Valor unit | F Valor total | G Pagamento | H Obs
+//
+// BEBIDAS: item cujo nome tem alguma destas palavras vai para o painel de bebidas
+// (o resto vai para a cozinha). Para incluir uma bebida nova, acrescente a palavra aqui
+// e também no admin.html.
+const PALAVRAS_BEBIDA = ['refri', 'refrigerante', 'coca', 'guarana', 'fanta', 'sprite', 'pepsi', 'kuat',
+  'schweppes', 'soda', 'tonica', 'suco', 'agua', 'h2o', 'lata', 'caldo de cana', 'cha gelado', 'mate', 'limonada'];
 // ==========================
 
-const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
-const ler = (k, padrao) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? padrao; } catch (e) { return padrao; } };
+const semAcento = (t) => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const RE_BEBIDA = new RegExp('\\b(' + PALAVRAS_BEBIDA.map(semAcento).join('|') + ')\\b');
+const ehBebida = (item) => RE_BEBIDA.test(semAcento(item));
+const DESTE_PAINEL = (item) => (MODO === 'bebidas') === ehBebida(item);
+const K = MODO === 'bebidas' ? 'bebidas_' : 'cozinha_';      // memória separada de cada painel
+const PREFIXO_ID = MODO === 'bebidas' ? 'beb:' : '';         // "Pronto" das bebidas separado do da cozinha
+
+if (MODO === 'bebidas') document.getElementById('titulo').textContent = '🥤 Pedidos de Bebidas';
+
+const guardar = (k, v) => { try { localStorage.setItem(K + k, JSON.stringify(v)); } catch (e) {} };
+const ler = (k, padrao) => { try { const v = JSON.parse(localStorage.getItem(K + k)); return v ?? padrao; } catch (e) { return padrao; } };
 
 // "Pronto" = id do pedido -> assinatura do conteúdo quando foi marcado.
 // Se alguém mudar o pedido depois (novo item, nova obs), a assinatura muda e ele volta para a fila.
-let prontosLocal = ler('cozinha_prontos2', {});  // modo só-neste-aparelho
+let prontosLocal = ler('prontos2', {});  // modo só-neste-aparelho
 let prontosPlanilha = {};                        // modo compartilhado (aba "Cozinha" da planilha)
 let pendentes = {};                              // cliques ainda sendo gravados: id -> { pronto, ate }
-let vistoEm = ler('cozinha_visto', {});        // chave -> horário em que apareceu
+let vistoEm = ler('visto', {});        // chave -> horário em que apareceu
 let assinaturas = {};                           // chave -> conteúdo, para detectar mudanças
 let primeiraCarga = true;
 let somAtivo = false;
-let aba = ler('cozinha_aba', 'fila');
+let aba = ler('aba', 'fila');
 let pedidos = [];
 let ultimaOk = 0;
 
@@ -180,6 +209,15 @@ function celula(linha, i) {
   return v == null ? '' : String(v).trim();
 }
 
+// "-", ".", "x", "nada", "sem obs"... não são observação de verdade
+function obsValida(t) {
+  const s = String(t || '').trim();
+  if (!s) return '';
+  if (/^[\s\-–—_.,;:/\\x0*]+$/i.test(s)) return '';
+  if (/^(n\/?a|nada|nenhum[a]?|sem( obs(erva[çc][ãa]o)?)?|ok|n[ãa]o)$/i.test(s)) return '';
+  return s;
+}
+
 function processar(tabela) {
   ultimaOk = Date.now();
   // Um pedido = linhas seguidas com o mesmo NOME CLIENTE.
@@ -191,18 +229,22 @@ function processar(tabela) {
     if (!item && !cliente) { atual = null; nomeAtual = ''; return; }
     const nome = cliente.toLowerCase().replace(/\s+/g, ' ');
     if (!atual || (nome && nome !== nomeAtual)) {
-      const id = (idx + 2) + '|' + (nome || 'sem-nome');   // linha da planilha + nome
+      const id = PREFIXO_ID + (idx + 2) + '|' + (nome || 'sem-nome');   // linha da planilha + nome
       atual = { id, cliente, itens: [], obs: [], pag: '', ordem: idx };
       mapa.set(id, atual);
       nomeAtual = nome;
     }
     const p = atual;
-    if (item) p.itens.push({ item, qtd: celula(linha, 3) || '1' });
-    const obs = celula(linha, 7);
-    if (obs && !p.obs.includes(obs)) p.obs.push(obs);
     if (!p.pag) p.pag = celula(linha, 6);
     if (!p.cliente) p.cliente = cliente;
+    // item de outro painel (bebida na cozinha / comida nas bebidas) fica de fora, junto com a obs da linha
+    if (item && !DESTE_PAINEL(item)) return;
+    if (item) p.itens.push({ item, qtd: celula(linha, 3) || '1' });
+    const obs = obsValida(celula(linha, 7));
+    if (obs && !p.obs.includes(obs)) p.obs.push(obs);
   });
+  // pedido sem nada para este painel (ex.: só bebida, olhando da cozinha) não aparece
+  [...mapa.keys()].forEach(id => { if (!mapa.get(id).itens.length) mapa.delete(id); });
 
   const agora = Date.now();
   let chegouNovo = false;
@@ -221,7 +263,7 @@ function processar(tabela) {
   Object.keys(prontosLocal).forEach(k => { if (!mapa.has(k)) delete prontosLocal[k]; });
   assinaturas = novasAssinaturas;
   primeiraCarga = false;
-  guardar('cozinha_visto', vistoEm); guardar('cozinha_prontos2', prontosLocal);
+  guardar('visto', vistoEm); guardar('prontos2', prontosLocal);
 
   if (chegouNovo) apitar();
   desenhar();
@@ -278,7 +320,7 @@ document.getElementById('lista').addEventListener('click', (e) => {
   const marcar = !estaPronto(p);
   if (!SCRIPT_URL) {
     if (marcar) prontosLocal[p.id] = p.assin; else delete prontosLocal[p.id];
-    guardar('cozinha_prontos2', prontosLocal);
+    guardar('prontos2', prontosLocal);
     desenhar();
     return;
   }
@@ -302,8 +344,8 @@ async function gravarPronto(p, marcar, tentativa = 1) {
     alert(`Não consegui salvar o pedido de ${p.cliente || 'sem nome'}. Confira a internet e toque de novo.`);
   }
 }
-document.getElementById('abaFila').onclick = () => { aba = 'fila'; guardar('cozinha_aba', aba); desenhar(); };
-document.getElementById('abaProntos').onclick = () => { aba = 'prontos'; guardar('cozinha_aba', aba); desenhar(); };
+document.getElementById('abaFila').onclick = () => { aba = 'fila'; guardar('aba', aba); desenhar(); };
+document.getElementById('abaProntos').onclick = () => { aba = 'prontos'; guardar('aba', aba); desenhar(); };
 
 // ---- som de aviso ----
 let audio;
