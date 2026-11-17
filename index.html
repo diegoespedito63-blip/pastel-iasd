@@ -87,11 +87,11 @@
 // ====== CONFIGURAÇÃO ======
 const PLANILHA = '1-i3Qt5g155rNmAX574CoNc8xPX_jcvuUG1gtTVlaUJI';
 const ABA_GID = '1512056425';
-const ATUALIZAR_A_CADA = 5;     // segundos
+const ATUALIZAR_A_CADA = 2;     // segundos
 const ATRASO_MINUTOS = 20;      // tempo para marcar o pedido em vermelho
 // Link do script da planilha (termina em /exec). Com ele, o "Pronto" aparece em todos os aparelhos.
 // Vazio = o "Pronto" fica salvo só no próprio aparelho.
-const SCRIPT_URL = ''; // desligado até o script ser atualizado (versão "Painel Cozinha")
+const SCRIPT_URL = ''; // desligado: o link ainda roda o script antigo
 // const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz219mJqCS-MUp6pLxinCY5qrvLj_DYQSQ1NCy6ZlySfl880FsnSGfV9eK3dQQNkZxm3A/exec';
 // Colunas da planilha: A Chave (não usada) | B Nome cliente | C Item | D Qtde | E Valor unit | F Valor total | G Pagamento | H Obs
 // ==========================
@@ -128,7 +128,10 @@ function jsonp(montarUrl, limiteMs = 15000) {
 }
 const gviz = (filtro, cb) => `https://docs.google.com/spreadsheets/d/${PLANILHA}/gviz/tq?${filtro}&headers=1&tqx=responseHandler:${cb}&_=${Date.now()}`;
 
+let buscando = false;
 async function buscar() {
+  if (buscando) return;          // a consulta anterior ainda não voltou
+  buscando = true;
   try {
     const [resp] = await Promise.all([
       jsonp(cb => gviz('gid=' + ABA_GID, cb)),
@@ -136,6 +139,7 @@ async function buscar() {
     ]);
     if (resp && resp.status === 'ok') processar(resp.table); else erro();
   } catch (e) { erro(); }
+  finally { buscando = false; }
 }
 
 async function buscarProntos() {
