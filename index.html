@@ -89,13 +89,21 @@ const PLANILHA = '1-i3Qt5g155rNmAX574CoNc8xPX_jcvuUG1gtTVlaUJI';
 const ABA_GID = '1512056425';
 const ATUALIZAR_A_CADA = 5;     // segundos
 const ATRASO_MINUTOS = 20;      // tempo para marcar o pedido em vermelho
+// Link do script da planilha (termina em /exec). Com ele, o "Pronto" aparece em todos os aparelhos.
+// Vazio = o "Pronto" fica salvo só no próprio aparelho.
+const SCRIPT_URL = ''; // desligado até o script ser atualizado (versão "Painel Cozinha")
+// const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz219mJqCS-MUp6pLxinCY5qrvLj_DYQSQ1NCy6ZlySfl880FsnSGfV9eK3dQQNkZxm3A/exec';
 // Colunas da planilha: A Chave (não usada) | B Nome cliente | C Item | D Qtde | E Valor unit | F Valor total | G Pagamento | H Obs
 // ==========================
 
 const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 const ler = (k, padrao) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? padrao; } catch (e) { return padrao; } };
 
-let prontos = ler('cozinha_prontos', {});      // chave -> true
+// "Pronto" = id do pedido -> assinatura do conteúdo quando foi marcado.
+// Se alguém mudar o pedido depois (novo item, nova obs), a assinatura muda e ele volta para a fila.
+let prontosLocal = ler('cozinha_prontos2', {});  // modo só-neste-aparelho
+let prontosPlanilha = {};                        // modo compartilhado (aba "Cozinha" da planilha)
+let pendentes = {};                              // cliques ainda sendo gravados: id -> { pronto, ate }
 let vistoEm = ler('cozinha_visto', {});        // chave -> horário em que apareceu
 let assinaturas = {};                           // chave -> conteúdo, para detectar mudanças
 let primeiraCarga = true;
@@ -105,14 +113,61 @@ let pedidos = [];
 let ultimaOk = 0;
 
 // ---- leitura da planilha (JSONP, funciona em qualquer hospedagem) ----
-function buscar() {
-  const cb = 'cb' + Date.now();
-  const s = document.createElement('script');
-  const limpar = () => { delete window[cb]; s.remove(); };
-  window[cb] = (resp) => { limpar(); if (resp && resp.status === 'ok') processar(resp.table); else erro(); };
-  s.onerror = () => { limpar(); erro(); };
-  s.src = `https://docs.google.com/spreadsheets/d/${PLANILHA}/gviz/tq?gid=${ABA_GID}&headers=1&tqx=responseHandler:${cb}&_=${Date.now()}`;
-  document.body.appendChild(s);
+let seq = 0;
+function jsonp(montarUrl, limiteMs = 15000) {
+  return new Promise((ok, falha) => {
+    const cb = 'cb' + Date.now() + '_' + (seq++);
+    const s = document.createElement('script');
+    const tempo = setTimeout(() => { limpar(); falha(new Error('tempo esgotado')); }, limiteMs);
+    const limpar = () => { clearTimeout(tempo); window[cb] = () => {}; s.remove(); };
+    window[cb] = (resp) => { limpar(); ok(resp); };
+    s.onerror = () => { limpar(); falha(new Error('erro de rede')); };
+    s.src = montarUrl(cb);
+    document.body.appendChild(s);
+  });
+}
+const gviz = (filtro, cb) => `https://docs.google.com/spreadsheets/d/${PLANILHA}/gviz/tq?${filtro}&headers=1&tqx=responseHandler:${cb}&_=${Date.now()}`;
+
+async function buscar() {
+  try {
+    const [resp] = await Promise.all([
+      jsonp(cb => gviz('gid=' + ABA_GID, cb)),
+      SCRIPT_URL ? buscarProntos() : null,
+    ]);
+    if (resp && resp.status === 'ok') processar(resp.table); else erro();
+  } catch (e) { erro(); }
+}
+
+async function buscarProntos() {
+  try {
+    const resp = await jsonp(cb => gviz('sheet=' + encodeURIComponent('Painel Cozinha'), cb));
+    if (!resp || resp.status !== 'ok') return;
+    const col = resp.table.cols[0];
+    if (!col || !/ID PEDIDO/i.test(col.label || '')) return;   // aba "Painel Cozinha" ainda não existe
+    const mapa = {};
+    resp.table.rows.forEach(l => { const id = celula(l, 0); if (id) mapa[id] = celula(l, 1); });
+    prontosPlanilha = mapa;
+    // clique já confirmado pela planilha: não precisa mais segurar
+    Object.keys(pendentes).forEach(id => {
+      const p = pedidos.find(x => x.id === id);
+      if (!pendentes[id].gravado || !p) return;
+      if ((mapa[id] === p.assin) === pendentes[id].pronto) delete pendentes[id];
+    });
+  } catch (e) { /* tenta de novo na próxima rodada */ }
+}
+
+function assinatura(p) {
+  const t = JSON.stringify([p.itens, p.obs]);
+  let h = 5381;
+  for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+  return 'h' + h.toString(36);
+}
+
+function estaPronto(p) {
+  const pend = pendentes[p.id];
+  if (pend && pend.ate > Date.now()) return pend.pronto;
+  const marcado = (SCRIPT_URL ? prontosPlanilha : prontosLocal)[p.id];
+  return !!marcado && marcado === p.assin;
 }
 
 function celula(linha, i) {
@@ -151,22 +206,19 @@ function processar(tabela) {
   const novasAssinaturas = {};
   pedidos = [...mapa.values()];
   pedidos.forEach(p => {
-    const assin = JSON.stringify([p.itens, p.obs]);
-    novasAssinaturas[p.id] = assin;
+    p.assin = assinatura(p);
+    novasAssinaturas[p.id] = p.assin;
     if (!vistoEm[p.id]) vistoEm[p.id] = agora;
-    const mudou = assinaturas[p.id] !== undefined && assinaturas[p.id] !== assin;
+    const mudou = assinaturas[p.id] !== undefined && assinaturas[p.id] !== p.assin;
     const novo = assinaturas[p.id] === undefined && !primeiraCarga;
-    if (novo || mudou) {
-      p.destaque = true;
-      if (mudou && prontos[p.id]) delete prontos[p.id];  // pedido alterado volta para a fila
-      chegouNovo = true;
-    }
+    if (novo || mudou) { p.destaque = true; chegouNovo = true; }
   });
   // esquece pedidos que saíram da planilha
-  Object.keys(vistoEm).forEach(k => { if (!mapa.has(k)) { delete vistoEm[k]; delete prontos[k]; } });
+  Object.keys(vistoEm).forEach(k => { if (!mapa.has(k)) delete vistoEm[k]; });
+  Object.keys(prontosLocal).forEach(k => { if (!mapa.has(k)) delete prontosLocal[k]; });
   assinaturas = novasAssinaturas;
   primeiraCarga = false;
-  guardar('cozinha_visto', vistoEm); guardar('cozinha_prontos', prontos);
+  guardar('cozinha_visto', vistoEm); guardar('cozinha_prontos2', prontosLocal);
 
   if (chegouNovo) apitar();
   desenhar();
@@ -183,8 +235,8 @@ const esc = (t) => String(t).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt
 function minutos(id) { return Math.floor((Date.now() - (vistoEm[id] || Date.now())) / 60000); }
 
 function desenhar() {
-  const fila = pedidos.filter(p => !prontos[p.id]);
-  const feitos = pedidos.filter(p => prontos[p.id]);
+  const fila = pedidos.filter(p => !estaPronto(p));
+  const feitos = pedidos.filter(p => estaPronto(p));
   document.getElementById('nFila').textContent = fila.length;
   document.getElementById('nProntos').textContent = feitos.length;
   document.getElementById('abaFila').classList.toggle('ativo', aba === 'fila');
@@ -197,7 +249,7 @@ function desenhar() {
   } else {
     lista.innerHTML = mostrar.map(p => {
       const min = minutos(p.id);
-      const feito = !!prontos[p.id];
+      const feito = estaPronto(p);
       return `<article class="pedido ${p.destaque ? 'novo' : ''} ${feito ? 'concluido' : ''}">
         <div class="topo"><div class="cliente">${esc(p.cliente || 'Sem nome')}</div></div>
         <div class="tempo ${!feito && min >= ATRASO_MINUTOS ? 'atrasado' : ''}">⏱ ${min < 1 ? 'agora' : 'há ' + min + ' min'}</div>
@@ -218,18 +270,42 @@ function desenhar() {
 document.getElementById('lista').addEventListener('click', (e) => {
   const b = e.target.closest('button.feito');
   if (!b) return;
-  const id = b.dataset.id;
-  if (prontos[id]) delete prontos[id]; else prontos[id] = true;
-  guardar('cozinha_prontos', prontos);
+  const p = pedidos.find(x => x.id === b.dataset.id);
+  if (!p) return;
+  const marcar = !estaPronto(p);
+  if (!SCRIPT_URL) {
+    if (marcar) prontosLocal[p.id] = p.assin; else delete prontosLocal[p.id];
+    guardar('cozinha_prontos2', prontosLocal);
+    desenhar();
+    return;
+  }
+  // mostra na hora e grava na planilha em segundo plano
+  pendentes[p.id] = { pronto: marcar, ate: Date.now() + 60000 };
   desenhar();
+  gravarPronto(p, marcar);
 });
+
+async function gravarPronto(p, marcar, tentativa = 1) {
+  const q = `id=${encodeURIComponent(p.id)}&pronto=${marcar ? 1 : 0}&assin=${encodeURIComponent(p.assin)}`;
+  try {
+    const resp = await jsonp(cb => `${SCRIPT_URL}?${q}&callback=${cb}`, 20000);
+    if (!resp || !resp.ok) throw new Error(resp && resp.erro);
+    // gravou; segura o estado na tela até a leitura da planilha confirmar (máx. 60 s)
+    pendentes[p.id] = { pronto: marcar, ate: Date.now() + 60000, gravado: true };
+  } catch (e) {
+    if (tentativa < 3) return gravarPronto(p, marcar, tentativa + 1);
+    delete pendentes[p.id];
+    desenhar();
+    alert(`Não consegui salvar o pedido de ${p.cliente || 'sem nome'}. Confira a internet e toque de novo.`);
+  }
+}
 document.getElementById('abaFila').onclick = () => { aba = 'fila'; guardar('cozinha_aba', aba); desenhar(); };
 document.getElementById('abaProntos').onclick = () => { aba = 'prontos'; guardar('cozinha_aba', aba); desenhar(); };
 
 // ---- som de aviso ----
 let audio;
 function apitar() {
-  try { navigator.vibrate && navigator.vibrate([300, 150, 300]); } catch (e) {}
+  try { if (navigator.vibrate && navigator.userActivation?.hasBeenActive) navigator.vibrate([300, 150, 300]); } catch (e) {}
   if (!somAtivo || !audio) return;
   const t = audio.currentTime;
   [0, 0.25, 0.5].forEach((d, i) => {
