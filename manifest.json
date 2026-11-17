@@ -1,6 +1,7 @@
 {
   "name": "Pedidos da Cozinha",
   "short_name": "Cozinha",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
