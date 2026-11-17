@@ -2,7 +2,15 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cozinha">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icone-192.png">
+<link rel="apple-touch-icon" href="icone-192.png">
 <title>Pedidos da Cozinha</title>
 <style>
   :root {
@@ -43,6 +51,23 @@
   .pedido.concluido { opacity: .55; }
   .pedido.concluido button.feito { background: var(--line); }
   .vazio { grid-column: 1 / -1; text-align: center; color: var(--muted); font-size: 1.3rem; padding: 60px 16px; }
+  button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+
+  /* ---- celular ---- */
+  @media (max-width: 600px) {
+    header { padding: calc(10px + env(safe-area-inset-top)) 12px 10px; gap: 8px; }
+    h1 { font-size: 1.2rem; }
+    .status { order: 3; width: 100%; font-size: .85rem; }
+    header button { padding: 8px 12px; font-size: .95rem; }
+    #tela { display: none; }
+    .abas { position: sticky; top: var(--alt-topo, 84px); z-index: 4; background: var(--bg); padding: 10px 12px; }
+    .abas button { flex: 1; padding: 12px; font-size: 1rem; }
+    main { grid-template-columns: 1fr; gap: 12px; padding: 4px 12px calc(16px + env(safe-area-inset-bottom)); }
+    .pedido { padding: 14px; border-radius: 14px; }
+    .cliente { font-size: 1.4rem; }
+    li { font-size: 1.2rem; }
+    .pedido button.feito { padding: 16px; font-size: 1.15rem; }
+  }
 </style>
 </head>
 <body>
@@ -64,7 +89,7 @@ const PLANILHA = '1-i3Qt5g155rNmAX574CoNc8xPX_jcvuUG1gtTVlaUJI';
 const ABA_GID = '1512056425';
 const ATUALIZAR_A_CADA = 5;     // segundos
 const ATRASO_MINUTOS = 20;      // tempo para marcar o pedido em vermelho
-// Colunas da planilha: A Chave | B Nome cliente | C Item | D Qtde | E Valor unit | F Valor total | G Pagamento | H Obs
+// Colunas da planilha: A Chave (não usada) | B Nome cliente | C Item | D Qtde | E Valor unit | F Valor total | G Pagamento | H Obs
 // ==========================
 
 const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
@@ -75,7 +100,7 @@ let vistoEm = ler('cozinha_visto', {});        // chave -> horário em que apare
 let assinaturas = {};                           // chave -> conteúdo, para detectar mudanças
 let primeiraCarga = true;
 let somAtivo = false;
-let aba = 'fila';
+let aba = ler('cozinha_aba', 'fila');
 let pedidos = [];
 let ultimaOk = 0;
 
@@ -99,13 +124,21 @@ function celula(linha, i) {
 
 function processar(tabela) {
   ultimaOk = Date.now();
+  // Um pedido = linhas seguidas com o mesmo NOME CLIENTE.
+  // Linha sem nome (mas com item) é mais um item do pedido de cima.
   const mapa = new Map();
+  let atual = null, nomeAtual = '';
   tabela.rows.forEach((linha, idx) => {
-    const chave = celula(linha, 0), cliente = celula(linha, 1), item = celula(linha, 2);
-    if (!item && !cliente) return;
-    const id = chave || cliente || ('linha' + idx);
-    if (!mapa.has(id)) mapa.set(id, { id, chave, cliente, itens: [], obs: [], pag: '', ordem: idx });
-    const p = mapa.get(id);
+    const cliente = celula(linha, 1), item = celula(linha, 2);
+    if (!item && !cliente) { atual = null; nomeAtual = ''; return; }
+    const nome = cliente.toLowerCase().replace(/\s+/g, ' ');
+    if (!atual || (nome && nome !== nomeAtual)) {
+      const id = (idx + 2) + '|' + (nome || 'sem-nome');   // linha da planilha + nome
+      atual = { id, cliente, itens: [], obs: [], pag: '', ordem: idx };
+      mapa.set(id, atual);
+      nomeAtual = nome;
+    }
+    const p = atual;
     if (item) p.itens.push({ item, qtd: celula(linha, 3) || '1' });
     const obs = celula(linha, 7);
     if (obs && !p.obs.includes(obs)) p.obs.push(obs);
@@ -166,7 +199,7 @@ function desenhar() {
       const min = minutos(p.id);
       const feito = !!prontos[p.id];
       return `<article class="pedido ${p.destaque ? 'novo' : ''} ${feito ? 'concluido' : ''}">
-        <div class="topo"><div class="cliente">${esc(p.cliente || 'Sem nome')}</div>${p.chave ? `<span class="num">#${esc(p.chave)}</span>` : ''}</div>
+        <div class="topo"><div class="cliente">${esc(p.cliente || 'Sem nome')}</div></div>
         <div class="tempo ${!feito && min >= ATRASO_MINUTOS ? 'atrasado' : ''}">⏱ ${min < 1 ? 'agora' : 'há ' + min + ' min'}</div>
         <ul>${p.itens.map(i => `<li><span class="qtd">${esc(i.qtd)}x</span><span>${esc(i.item)}</span></li>`).join('')}</ul>
         ${p.obs.length ? `<div class="obs">⚠ ${p.obs.map(esc).join('<br>⚠ ')}</div>` : ''}
@@ -190,12 +223,13 @@ document.getElementById('lista').addEventListener('click', (e) => {
   guardar('cozinha_prontos', prontos);
   desenhar();
 });
-document.getElementById('abaFila').onclick = () => { aba = 'fila'; desenhar(); };
-document.getElementById('abaProntos').onclick = () => { aba = 'prontos'; desenhar(); };
+document.getElementById('abaFila').onclick = () => { aba = 'fila'; guardar('cozinha_aba', aba); desenhar(); };
+document.getElementById('abaProntos').onclick = () => { aba = 'prontos'; guardar('cozinha_aba', aba); desenhar(); };
 
 // ---- som de aviso ----
 let audio;
 function apitar() {
+  try { navigator.vibrate && navigator.vibrate([300, 150, 300]); } catch (e) {}
   if (!somAtivo || !audio) return;
   const t = audio.currentTime;
   [0, 0.25, 0.5].forEach((d, i) => {
@@ -228,6 +262,10 @@ async function manterTelaLigada() {
   try { if ('wakeLock' in navigator && !trava) { trava = await navigator.wakeLock.request('screen'); trava.addEventListener('release', () => trava = null); } } catch (e) {}
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { manterTelaLigada(); buscar(); } });
+
+// mantém as abas grudadas logo abaixo do cabeçalho no celular
+function ajustarTopo() { document.documentElement.style.setProperty('--alt-topo', document.querySelector('header').offsetHeight + 'px'); }
+window.addEventListener('resize', ajustarTopo); ajustarTopo();
 
 buscar();
 setInterval(buscar, ATUALIZAR_A_CADA * 1000);
