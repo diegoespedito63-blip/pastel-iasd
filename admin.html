@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<meta name="robots" content="noindex">
+<link rel="icon" href="icone-192.png">
+<link rel="apple-touch-icon" href="icone-192.png">
+<title>Painel de Vendas</title>
+<style>
+  :root {
+    --bg: #111418; --card: #1c2128; --line: #2d333b; --text: #f2f4f7; --muted: #9aa4b2;
+    --bar: #f5b301; --track: #262c34; --ok: #2fb35a; --wait: #f5b301;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: calc(12px + env(safe-area-inset-top)) 16px 12px; background: #0b0d10; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 1.4rem; flex: 1; }
+  .status { font-size: .9rem; color: var(--muted); }
+  .status b { color: var(--text); }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
+  .dot.off { background: #d64545; }
+  a.btn { color: var(--text); text-decoration: none; background: var(--line); border-radius: 10px; padding: 8px 12px; font-size: .95rem; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .tile .rot { color: var(--muted); font-size: .9rem; }
+  .tile .val { font-size: 1.9rem; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile.hero { grid-column: span 2; }
+  .tile.hero .val { font-size: 2.6rem; color: var(--bar); }
+  .tile .sub { color: var(--muted); font-size: .85rem; margin-top: 2px; }
+  .tile.pisca { animation: pisca 1.2s ease-in-out 3; }
+  @keyframes pisca { 50% { box-shadow: 0 0 0 4px rgba(245,179,1,.35); } }
+
+  .duas { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-width: 0; }
+  h2 { margin: 0 0 12px; font-size: 1.1rem; }
+  h2 small { color: var(--muted); font-weight: 400; font-size: .85rem; }
+
+  .barras { display: flex; flex-direction: column; gap: 10px; }
+  .linha .topo { display: flex; justify-content: space-between; gap: 8px; font-size: .98rem; margin-bottom: 4px; }
+  .linha .nome { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .linha .num { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .linha .num b { color: var(--text); }
+  .trilho { height: 10px; background: var(--track); border-radius: 4px; overflow: hidden; }
+  .trilho i { display: block; height: 100%; background: var(--bar); border-radius: 0 4px 4px 0; transition: width .4s; }
+  .linha:hover .trilho i { filter: brightness(1.15); }
+
+  table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: .85rem; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.novo td { animation: fundo 2.5s ease-out; }
+  @keyframes fundo { from { background: rgba(245,179,1,.22); } to { background: transparent; } }
+  .selo { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 2px 10px; font-size: .82rem; font-weight: 600; white-space: nowrap; }
+  .selo.ok { background: rgba(47,179,90,.16); color: #6fdc93; }
+  .selo.wait { background: rgba(245,179,1,.14); color: #ffd25e; }
+  .itens { color: var(--muted); font-size: .88rem; }
+  .vazio { color: var(--muted); text-align: center; padding: 30px 8px; }
+
+  @media (max-width: 760px) {
+    .duas { grid-template-columns: 1fr; }
+    .tile.hero, .tile:last-child { grid-column: 1 / -1; }
+    .tiles { grid-template-columns: repeat(2, 1fr); }
+    .tile .val { font-size: 1.5rem; }
+    .tile.hero .val { font-size: 2.2rem; }
+    h1 { font-size: 1.15rem; }
+    .status { order: 3; width: 100%; }
+    /* tabela vira cartões no celular */
+    table, tbody, tr, td { display: block; }
+    thead { display: none; }
+    tr { border-bottom: 1px solid var(--line); padding: 12px 0; display: grid; grid-template-columns: 1fr auto;
+      grid-template-areas: "cli st" "itn itn" "pg vl"; gap: 4px 10px; align-items: center; }
+    td { border: 0; padding: 0; }
+    td.cli { grid-area: cli; font-weight: 700; }
+    td.st { grid-area: st; }
+    td.itn { grid-area: itn; }
+    td.pg { grid-area: pg; color: var(--muted); }
+    td.vl { grid-area: vl; }
+    td.r { text-align: right; }
+    td.vazio { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>📊 Painel de Vendas</h1>
+  <span class="status"><span class="dot" id="dot"></span><span id="status">Conectando…</span></span>
+  <a class="btn" href="./">🍳 Ver cozinha</a>
+</header>
+
+<div class="wrap">
+  <div class="tiles">
+    <div class="tile hero" id="tTotal"><div class="rot">Total vendido</div><div class="val" id="vTotal">R$ 0,00</div><div class="sub" id="sTotal">&nbsp;</div></div>
+    <div class="tile"><div class="rot">Pedidos</div><div class="val" id="vPedidos">0</div><div class="sub" id="sPedidos">&nbsp;</div></div>
+    <div class="tile"><div class="rot">Itens vendidos</div><div class="val" id="vItens">0</div></div>
+    <div class="tile"><div class="rot">Ticket médio</div><div class="val" id="vTicket">R$ 0,00</div><div class="sub">por pedido</div></div>
+  </div>
+
+  <div class="duas">
+    <section>
+      <h2>O que mais vendeu <small>(por quantidade)</small></h2>
+      <div class="barras" id="ranking"></div>
+    </section>
+    <section>
+      <h2>Formas de pagamento</h2>
+      <div class="barras" id="pagamentos"></div>
+    </section>
+  </div>
+
+  <section>
+    <h2>Pedidos <small>(mais recentes primeiro)</small></h2>
+    <table>
+      <thead><tr><th>Cliente</th><th>Itens</th><th>Pagamento</th><th class="r">Valor</th><th class="r">Cozinha</th></tr></thead>
+      <tbody id="tabela"><tr><td class="vazio" colspan="5">Carregando…</td></tr></tbody>
+    </table>
+  </section>
+</div>
+
+<script>
+// ====== CONFIGURAÇÃO (a mesma do painel da cozinha) ======
+const PLANILHA = '1-i3Qt5g155rNmAX574CoNc8xPX_jcvuUG1gtTVlaUJI';
+const ABA_GID = '1512056425';
+const ATUALIZAR_A_CADA = 2; // segundos
+// Colunas: A Chave | B Nome cliente | C Item | D Qtde | E Valor unit | F Valor total | G Pagamento | H Obs
+// ==========================================================
+
+let seq = 0;
+function jsonp(montarUrl, limiteMs = 15000) {
+  return new Promise((ok, falha) => {
+    const cb = 'cb' + Date.now() + '_' + (seq++);
+    const s = document.createElement('script');
+    const tempo = setTimeout(() => { limpar(); falha(new Error('tempo')); }, limiteMs);
+    const limpar = () => { clearTimeout(tempo); window[cb] = () => {}; s.remove(); };
+    window[cb] = (resp) => { limpar(); ok(resp); };
+    s.onerror = () => { limpar(); falha(new Error('rede')); };
+    s.src = montarUrl(cb);
+    document.body.appendChild(s);
+  });
+}
+const gviz = (filtro, cb) => `https://docs.google.com/spreadsheets/d/${PLANILHA}/gviz/tq?${filtro}&headers=1&tqx=responseHandler:${cb}&_=${Date.now()}`;
+
+function celula(linha, i) {
+  const c = linha.c && linha.c[i];
+  if (!c) return '';
+  const v = c.f != null ? c.f : c.v;
+  return v == null ? '' : String(v).trim();
+}
+function numero(linha, i) {
+  const c = linha.c && linha.c[i];
+  if (!c || c.v == null) return 0;
+  if (typeof c.v === 'number') return c.v;
+  const t = String(c.v).replace(/[^\d,.-]/g, '');
+  if (!t) return 0;
+  return parseFloat(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t) || 0;
+}
+const real = (n) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const esc = (t) => String(t).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+// mesma regra do painel da cozinha (para o status "Pronto" bater)
+function assinatura(p) {
+  const t = JSON.stringify([p.itens.map(i => ({ item: i.item, qtd: i.qtdTxt })), p.obs]);
+  let h = 5381;
+  for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+  return 'h' + h.toString(36);
+}
+
+let prontos = {};
+let vistos = null;      // ids já vistos, para destacar venda nova
+let totalAnterior = null;
+let buscando = false;
+
+async function buscar() {
+  if (buscando) return;
+  buscando = true;
+  try {
+    const [vendas, cozinha] = await Promise.all([
+      jsonp(cb => gviz('gid=' + ABA_GID, cb)),
+      jsonp(cb => gviz('sheet=' + encodeURIComponent('Painel Cozinha'), cb)).catch(() => null),
+    ]);
+    if (cozinha && cozinha.status === 'ok' && /ID PEDIDO/i.test((cozinha.table.cols[0] || {}).label || '')) {
+      const m = {};
+      cozinha.table.rows.forEach(l => { const id = celula(l, 0); if (id) m[id] = celula(l, 1); });
+      prontos = m;
+    }
+    if (vendas && vendas.status === 'ok') montar(vendas.table); else erro();
+  } catch (e) { erro(); }
+  finally { buscando = false; }
+}
+
+function montar(tabela) {
+  // agrupa igual à cozinha: linhas seguidas com o mesmo nome = 1 pedido
+  const pedidos = [];
+  let atual = null, nomeAtual = '';
+  tabela.rows.forEach((l, idx) => {
+    const cliente = celula(l, 1), item = celula(l, 2);
+    if (!item && !cliente) { atual = null; nomeAtual = ''; return; }
+    const nome = cliente.toLowerCase().replace(/\s+/g, ' ');
+    if (!atual || (nome && nome !== nomeAtual)) {
+      atual = { id: (idx + 2) + '|' + (nome || 'sem-nome'), cliente, itens: [], obs: [], pag: '', valor: 0 };
+      pedidos.push(atual); nomeAtual = nome;
+    }
+    const qtdTxt = celula(l, 3) || '1';
+    const qtd = numero(l, 3) || 1;
+    const unit = numero(l, 4);
+    const total = numero(l, 5) || qtd * unit;
+    if (item) atual.itens.push({ item, qtdTxt, qtd, total });
+    atual.valor += total;
+    const obs = celula(l, 7); if (obs && !atual.obs.includes(obs)) atual.obs.push(obs);
+    if (!atual.pag) atual.pag = celula(l, 6);
+  });
+  pedidos.forEach(p => { p.pronto = prontos[p.id] && prontos[p.id] === assinatura(p); });
+
+  // números
+  const total = pedidos.reduce((s, p) => s + p.valor, 0);
+  const itens = pedidos.reduce((s, p) => s + p.itens.reduce((a, i) => a + i.qtd, 0), 0);
+  const nProntos = pedidos.filter(p => p.pronto).length;
+  document.getElementById('vTotal').textContent = real(total);
+  document.getElementById('vPedidos').textContent = pedidos.length;
+  document.getElementById('sPedidos').textContent = `${nProntos} prontos · ${pedidos.length - nProntos} na cozinha`;
+  document.getElementById('vItens').textContent = itens;
+  document.getElementById('vTicket').textContent = real(pedidos.length ? total / pedidos.length : 0);
+  if (totalAnterior !== null && total > totalAnterior) {
+    const t = document.getElementById('tTotal'); t.classList.remove('pisca'); void t.offsetWidth; t.classList.add('pisca');
+    document.getElementById('sTotal').textContent = `+ ${real(total - totalAnterior)} agora há pouco`;
+  }
+  totalAnterior = total;
+
+  // ranking de itens
+  const porItem = {};
+  pedidos.forEach(p => p.itens.forEach(i => {
+    const k = i.item.trim().toLowerCase();
+    porItem[k] = porItem[k] || { nome: i.item.trim(), qtd: 0, valor: 0 };
+    porItem[k].qtd += i.qtd; porItem[k].valor += i.total;
+  }));
+  const rank = Object.values(porItem).sort((a, b) => b.qtd - a.qtd || b.valor - a.valor);
+  const maxQ = Math.max(1, ...rank.map(r => r.qtd));
+  document.getElementById('ranking').innerHTML = rank.length ? rank.map(r => `
+    <div class="linha" title="${esc(r.nome)}: ${r.qtd} un. · ${real(r.valor)}">
+      <div class="topo"><span class="nome">${esc(r.nome)}</span><span class="num"><b>${r.qtd}</b> un. · ${real(r.valor)}</span></div>
+      <div class="trilho"><i style="width:${(r.qtd / maxQ * 100).toFixed(1)}%"></i></div>
+    </div>`).join('') : '<div class="vazio">Nenhuma venda ainda.</div>';
+
+  // formas de pagamento
+  const porPag = {};
+  pedidos.forEach(p => { const k = p.pag || 'Não informado'; porPag[k] = porPag[k] || { qtd: 0, valor: 0 }; porPag[k].qtd++; porPag[k].valor += p.valor; });
+  const pags = Object.entries(porPag).sort((a, b) => b[1].valor - a[1].valor);
+  document.getElementById('pagamentos').innerHTML = pags.length ? pags.map(([nome, v]) => {
+    const pct = total ? v.valor / total * 100 : 0;
+    return `<div class="linha" title="${esc(nome)}: ${real(v.valor)} em ${v.qtd} pedido(s)">
+      <div class="topo"><span class="nome">${esc(nome)}</span><span class="num"><b>${real(v.valor)}</b> · ${pct.toFixed(0)}%</span></div>
+      <div class="trilho"><i style="width:${pct.toFixed(1)}%"></i></div>
+    </div>`;
+  }).join('') : '<div class="vazio">—</div>';
+
+  // tabela de pedidos (mais recentes primeiro)
+  const primeira = vistos === null;
+  const novosVistos = new Set(pedidos.map(p => p.id));
+  document.getElementById('tabela').innerHTML = pedidos.length ? pedidos.slice().reverse().map(p => `
+    <tr class="${!primeira && !vistos.has(p.id) ? 'novo' : ''}">
+      <td class="cli">${esc(p.cliente || 'Sem nome')}</td>
+      <td class="itn"><span class="itens">${p.itens.map(i => `${esc(i.qtdTxt)}x ${esc(i.item)}`).join(', ')}${p.obs.length ? ' · ⚠ ' + p.obs.map(esc).join(', ') : ''}</span></td>
+      <td class="pg">${esc(p.pag || '—')}</td>
+      <td class="r vl"><b>${real(p.valor)}</b></td>
+      <td class="r st">${p.pronto ? '<span class="selo ok">✔ Pronto</span>' : '<span class="selo wait">⏳ Na cozinha</span>'}</td>
+    </tr>`).join('') : '<tr><td class="vazio" colspan="5">Nenhum pedido ainda.</td></tr>';
+  vistos = novosVistos;
+
+  document.getElementById('dot').classList.remove('off');
+  document.getElementById('status').innerHTML = `Atualizado <b>${new Date().toLocaleTimeString('pt-BR')}</b>`;
+}
+
+function erro() {
+  document.getElementById('dot').classList.add('off');
+  document.getElementById('status').innerHTML = '<b>Sem conexão</b> — tentando de novo…';
+}
+
+buscar();
+setInterval(buscar, ATUALIZAR_A_CADA * 1000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') buscar(); });
+</script>
+</body>
+</html>
